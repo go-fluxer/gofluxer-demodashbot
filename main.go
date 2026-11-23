@@ -13,12 +13,17 @@ import (
 )
 
 type Config struct {
-	Token        string `json:"FLUXERBOTTOKEN"`
-	Prefix       string `json:"FLUXERBOTPREFIX"`
-	Webport      string `json:"WEBPORT"`
-	ClientID     string `json:"OAUTH_CLIENTID"`
-	ClientSecret string `json:"OAUTH_CLIENTSECRET"`
-	RedirectURI  string `json:"OAUTH_REDIRECTURI"`
+	Token          string `json:"FLUXERBOTTOKEN"`
+	Prefix         string `json:"FLUXERBOTPREFIX"`
+	OwnerID        string `json:"FLUXERBOTOWNERID"`
+	Webport        string `json:"WEBPORT"`
+	ClientID       string `json:"OAUTH_CLIENTID"`
+	ClientSecret   string `json:"OAUTH_CLIENTSECRET"`
+	RedirectURI    string `json:"OAUTH_REDIRECTURI"`
+	WebhookId      string `json:"FLUXERWEBHOOKID"`
+	WebhookToken   string `json:"FLUXERWEBHOOKTOKEN"`
+	FluxerServerId string `json:"FLUXERSERVERID"`
+	FluxerRoleId   string `json:"FLUXERROLEID"`
 }
 func LoadConfig(filename string) (Config, error) {
 	var config Config
@@ -72,6 +77,8 @@ func main() {
 	// bot.NewBotInstance("https://example.com/api/v1", "wss://example.com/gateway/?v=1")
 	// The bot.NewBotInstance() function allows you to use a 3rd party Fluxer instance instead of using the main one.
 	bot.NewBotConfig(true, 500)
+	targetGuildId := cfg.FluxerServerId
+	targetRoleId := cfg.FluxerRoleId
 
 
 
@@ -114,7 +121,7 @@ func main() {
 	bot.AddCommand("help", func(m *gofluxer.Message, args []string) {
 		bot.SendEmbed(m.ChannelID, map[string]interface{}{
 			"title":       "Bot",
-			"description": "help\nping\nsay\nesay\nsetlogchannel\ndisablelogchannel",
+			"description": "help\nping\nsay\nesay\nserverinfo\nsetlogchannel\ndisablelogchannel\nannounce",
 			"color":       0x00FFFF,
 		})
 	})
@@ -128,14 +135,14 @@ func main() {
 			bot.SendMessage(m.ChannelID, "What do you want me to say?")
 			return
 		}
-		bot.SendMessage(m.ChannelID, strings.Join(args, " "))
+		bot.SendMessageClean(m.ChannelID, strings.Join(args, " "))
 	})
 
 	bot.AddCommand("esay", func(m *gofluxer.Message, args []string) {
 		fullInput := strings.Join(args, " ")
 		parts := strings.Split(fullInput, "|")
 		if len(parts) < 2 {
-			bot.SendMessage(m.ChannelID, "Usage: essay Title | Description")
+			bot.SendMessage(m.ChannelID, "Usage: essay <Title> | <Description>")
 			return
 		}
 
@@ -144,6 +151,53 @@ func main() {
 			"description": strings.TrimSpace(parts[1]),
 			"color":       0x00FFFF,
 		})
+	})
+
+	bot.AddCommand("stickerinfo", func(m *gofluxer.Message, args []string) {
+		if len(args) < 1 {
+			bot.ReplyMessage(m, "Usage: `stickerinfo <stickerID>`")
+			return
+		}
+
+		stickerID := args[0]
+		sticker, err := bot.GetSticker(stickerID)
+		if err != nil {
+			bot.ReplyMessage(m, "❌ Failed to fetch sticker info: "+err.Error())
+			return
+		}
+		bot.SendEmbed(m.ChannelID, map[string]interface{}{
+			"title":       sticker.Name,
+			"description": fmt.Sprintf("ID: `%s`\nDescription: %s\nTags: %s", sticker.ID, sticker.Description, sticker.Tags),
+			"color":       0x00FFFF,
+		})
+	})
+
+	bot.AddCommand("serverinfo", func(m *gofluxer.Message, args []string) {
+		info, err := bot.GetGuild(m.GuildID)
+		if err != nil {
+			bot.SendMessage(m.ChannelID, "❌ Unable to fetch server information.")
+			return
+		}
+		bot.SendEmbed(m.ChannelID, map[string]interface{}{
+			"title":       info.Name,
+			"description": fmt.Sprintf("ID: %s\nOwner ID: %s\nTotal Members: %d\nPermissions: %s\nIcon: %s\nSystem Channel: %s", info.ID, info.OwnerID, info.MemberCount, info.Permissions, info.Icon, info.SysChannel),
+			"color":       0x00FFFF,
+		})
+	})
+
+	bot.AddCommand("announce", func(m *gofluxer.Message, args []string) {
+		devID := cfg.OwnerID
+		if m.Author.ID == devID {
+			if len(args) == 0 {
+				bot.SendMessage(m.ChannelID, "What do you want me to say?")
+				return
+			}
+			wh := gofluxer.NewWebhookClient(cfg.WebhookId, cfg.WebhookToken)
+			wh.Execute(strings.Join(args, " "))
+			bot.SendMessage(m.ChannelID, "Message sent to webhook")
+		} else {
+			bot.SendMessage(m.ChannelID, "Only Bot Staff members can use this command")
+		}
 	})
 
 	// CONFIG COMMANDS
@@ -194,6 +248,40 @@ func main() {
 		bot.SendMessage(m.ChannelID, "Logging has been disabled.")
 	})
 
+	// MISC COMMANDS
+
+	bot.AddCommand("roleadd", func(m *gofluxer.Message, args []string) {
+		if m.GuildID != targetGuildId {
+			bot.SendMessage(m.ChannelID, "❌ This server is not authorized to use this command")
+			return
+		}
+		err := bot.AddRole(m.GuildID, m.Author.ID, targetRoleId)
+		if err != nil {
+			bot.SendMessage(m.ChannelID, "❌ Failed to apply the role. Check bot permissions.")
+			return
+		}
+		bot.SendMessage(m.ChannelID, "Gave the role to you")
+	})
+	bot.AddCommand("removeroleremove", func(m *gofluxer.Message, args []string) {
+		if m.GuildID != targetGuildId {
+			return
+		}
+		err := bot.RemoveRole(m.GuildID, m.Author.ID, targetRoleId)
+		if err != nil {
+			bot.SendMessage(m.ChannelID, "❌ Failed to strip the role.")
+			return
+		}
+		bot.SendMessage(m.ChannelID, "Removed the role from you.")
+	})
+
+	bot.AddCommand("test-sowner", func(m *gofluxer.Message, args []string) {
+		if !bot.IsOwner(m) {
+			bot.SendMessage(m.ChannelID, "You need to have the **SERVER OWNER** permission to use this command.")
+			return
+		}
+		bot.SendMessage(m.ChannelID, "Hello server owner")
+	})
+
 
 
 	// WEB DASHBOARD
@@ -229,7 +317,7 @@ func main() {
 					fmt.Fprintf(w, `<li>
 						<strong>%s</strong> (ID: %s) <br>
 						<span style="color:orange;">⚠️ Bot not in server.</span> <br>
-						<a href="https://fluxer.app/oauth2/authorize?client_id=%s&scope=bot" target="_blank">Invite Bot</a>
+						<a href="https://web.fluxer.app/oauth2/authorize?client_id=%s&scope=bot" target="_blank">Invite Bot</a>
 						<hr>
 					</li>`, g.Name, g.ID, cfg.ClientID)
 					continue
